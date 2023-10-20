@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag of llama-cpp-python to build: v0.2.11'
+        description: 'Version tag of flash-attention to build: v0.2.11'
         default: 'v0.2.11'
         required: true
         type: string
@@ -21,7 +21,6 @@ on:
   workflow_call:
     inputs:
       version:
-        description: 'Version tag of llama-cpp-python to build: v0.2.11'
         default: 'v0.2.11'
         required: true
         type: string
@@ -57,17 +56,12 @@ jobs:
         id: set-matrix
         run: |
           $matrix = @{
-              'os' = 'ubuntu-20.04', 'windows-latest'
-              'pyver' = "3.10", "3.8", "3.9", "3.11"
-              'rocm' = '5.4.2', '5.5', '5.5.1', '5.6.1'
+              'os' = 'ubuntu-22.04'
+              'pyver' =  "3.10", "3.11"
+              'rocm' =  '5.6.1','5.7.1'
               'avx' = "AVX", "AVX2", "basic"
               'rename' = '0', '1'
-              'exclude' = @(
-                  @{'os' = 'windows-latest';'rocm' = '5.4.2'},
-                  @{'os' = 'windows-latest';'rocm' = '5.5'},
-                  @{'os' = 'windows-latest';'rocm' = '5.6.1'},
-                  @{'os' = 'ubuntu-20.04';'rocm' = '5.5.1'}
-              )
+              
           }
           
           if ($env:CONFIGIN -ne 'Default') {$env:CONFIGIN.split(';').foreach({$matrix[$_.split(':')[0]] = $_.split(':')[1].split(',')})}
@@ -109,7 +103,7 @@ jobs:
           
       - uses: actions/checkout@v4
         with:
-          repository: 'abetlen/llama-cpp-python'
+          repository: 'ROCmSoftwarePlatform/flash-attention'
           ref: ${{ inputs.version }}
           submodules: 'recursive'
           
@@ -123,16 +117,7 @@ jobs:
           echo -e 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600' | sudo tee /etc/apt/preferences.d/rocm-pin-600
           sudo apt update
           sudo apt install rocm-dev rocblas-dev hipblas-dev -y
-          
-      - name: Install Windows ROCm SDK
-        if: runner.os == 'Windows'
-        run: |
-          curl -LO https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-23.Q3-Win10-Win11-For-HIP.exe
-          Start-Process 'AMD-Software-PRO-Edition-23.Q3-Win10-Win11-For-HIP.exe' -ArgumentList '-install' -NoNewWindow -Wait
-          echo "C:\Program Files\AMD\ROCm\5.5\bin" >> $env:GITHUB_PATH
-          echo 'ROCM_PATH=C:\Program Files\AMD\ROCm\5.5' >> $env:GITHUB_ENV
-          echo 'HIP_PATH=C:\Program Files\AMD\ROCm\5.5' >> $env:GITHUB_ENV
-          
+     
       - uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.pyver }}
@@ -140,36 +125,7 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install build wheel cmake scikit-build ninja
-          
-      - name: Change Package Name
-        if: matrix.rename == '1'
-        run: |
-          $packageVersion = [version]$env:PCKGVER.TrimStart('v')
-          $pyproject = Get-Content 'pyproject.toml' -raw
-          $cmakelists = Get-Content 'CMakeLists.txt' -raw
-          if ($packageVersion -lt [version]'0.2.0') {
-            $setup = Get-Content 'setup.py' -raw
-            $regexstr = '(?s)name="llama_cpp_python",(.+)(package_dir={"llama_cpp": "llama_cpp", "llama_cpp.server": "llama_cpp/server"},.+?packages=\["llama_cpp", "llama_cpp.server"],)'
-            if ($packageVersion -gt [version]'0.1.77') {$regexstr = '(?s)name="llama_cpp_python",(.+)(package_dir={"llama_cpp": "llama_cpp", "llama_cpp.server": "llama_cpp/server"},.+?package_data={"llama_cpp": \["py.typed"]},.+?packages=\["llama_cpp", "llama_cpp.server"],)'}
-            $regexmatch = [Regex]::Matches($setup,$regexstr)
-            if (!($regexmatch[0].Success)) {throw 'setup.py parsing failed'}
-            $newstr = 'name="llama_cpp_python_cuda",' + $regexmatch[0].Groups[1].Value + $regexmatch[0].Groups[2].Value.Replace('llama_cpp','llama_cpp_cuda')
-            $newsetup = $regexmatch[0].Result(('$`'+$newstr+'$'''))
-            New-Item 'setup.py' -itemType File -value $newsetup -force
-            $regexstr = '(?s)(?<=name = ")llama_cpp_python(".+?packages = \[{include = ")llama_cpp(".+)'
-            $regexmatch = [Regex]::Matches($pyproject,$regexstr)
-            if (!($regexmatch[0].Success)) {throw 'pyproject.toml parsing failed'}
-            $newpyproject = $regexmatch[0].Result(('$`'+'llama_cpp_python_cuda'+'$1llama_cpp_cuda$2'))
-          } else {
-            $regexstr = '(?s)(?<=\[project]\s+?name = ")llama_cpp_python(".+?all = \[\s+?")llama_cpp_python(\[.+?wheel.packages = \[")llama_cpp("].+?input = ")llama_cpp(?=/__init__.py")'
-            $regexmatch = [Regex]::Matches($pyproject,$regexstr)
-            if (!($regexmatch[0].Success)) {throw 'pyproject.toml parsing failed'}
-            $newpyproject = $regexmatch[0].Result(('$`' + 'llama_cpp_python_cuda' + '$1llama_cpp_cuda$2' + 'llama_cpp_cuda$3llama_cpp_cuda' + '$'''))
-          }
-          Copy-Item 'llama_cpp' 'llama_cpp_cuda' -recurse
-          New-Item 'pyproject.toml' -itemType File -value $newpyproject -force
-          New-Item 'CMakeLists.txt' -itemType File -value $cmakelists.Replace('llama_cpp','llama_cpp_cuda') -force
-        
+      
       - name: Build Wheel
         run: |
           if ($IsLinux) {
@@ -181,20 +137,11 @@ jobs:
             $env:GITHUB_PATH = "/opt/rocm/bin:$env:GITHUB_PATH"
             $env:ROCM_PATH = "/opt/rocm"
             $env:HIP_PATH = "/opt/rocm"
-          } else {
-            $env:CC = 'C:\Program Files\AMD\ROCm\5.5\bin\clang.exe'
-            $env:CXX = 'C:\Program Files\AMD\ROCm\5.5\bin\clang++.exe'
-            $env:CMAKE_PREFIX_PATH = 'C:\Program Files\AMD\ROCm\5.5'
-            $cmakelists = Get-Content 'CMakeLists.txt' -raw
-            $regexstr = '(?s)(?<=\n)\s+?install\(\s+FILES \$\<TARGET_RUNTIME_DLLS.+/llama_cpp(?:_cuda)?\s+\)\s+?(?=endif\(\))'
-            $regexmatch = [Regex]::Matches($cmakelists,$regexstr)
-            if ($regexmatch[0].Success) {New-Item 'CMakeLists.txt' -itemType File -value $regexmatch[0].Result('$`$''') -force}
           }
           $env:VERBOSE = '1'
           $packageVersion = [version]$env:PCKGVER.TrimStart('v')
           
-          $gputargets = 'gfx803;gfx900;gfx906:xnack-;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102'
-          if ([version]$env:ROCM_VERSION -lt [version]'5.5') {$gputargets = 'gfx803;gfx900;gfx906:xnack-;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx1010;gfx1012;gfx1030'}
+          $gputargets = 'gfx900;gfx906:xnack-;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102'
           
           if ($env:AVXVER -eq 'AVX') {$env:CMAKE_ARGS = "-GNinja -DLLAMA_HIPBLAS=ON -DLLAMA_AVX2=off -DLLAMA_FMA=off -DLLAMA_F16C=off -DGPU_TARGETS=$gputargets"}
           if ($env:AVXVER -eq 'AVX512') {$env:CMAKE_ARGS = "-GNinja -DLLAMA_HIPBLAS=ON -DLLAMA_AVX512=on -DGPU_TARGETS=$gputargets"}
