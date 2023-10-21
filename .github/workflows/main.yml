@@ -28,6 +28,7 @@ jobs:
         #   CIBW_SOME_OPTION: value
         env:
           CIBW_BUILD: cp310-*
+          CIBW_BEFORE_BUILD: python install -r requirements.txt
 
       - uses: actions/upload-artifact@v3
         with:
