@@ -14,6 +14,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: 'ROCmSoftwarePlatform/flash-attention'
+          submodules: 'true'
+          token: ${{ secrets.PAT_TOKEN }}
 
       # Used to host cibuildwheel
       - uses: actions/setup-python@v3
